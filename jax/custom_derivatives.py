@@ -252,6 +252,8 @@ def _flatten_jvp(in_tree, *args):
   yield primals_out + tangents_out, out_tree
 
 class CustomJVPCallPrimitive(core.CallPrimitive):
+  initial_style: core.Primitive
+
   def bind(self, fun, jvp, *args):
     args = map(core.full_lower, args)
     top_trace = core.find_top_trace(args)
@@ -542,6 +544,8 @@ def _flatten_bwd(in_tree, out_trees, *args):
 
 
 class CustomVJPCallPrimitive(core.CallPrimitive):
+  initial_style: core.Primitive
+
   def bind(self, fun, fwd, bwd, *args, out_trees):
     args = map(core.full_lower, args)
     top_trace = core.find_top_trace(args)
@@ -589,7 +593,7 @@ CustomVJPCallPrimitive.initial_style = custom_vjp_call_jaxpr_p
 def _custom_vjp_call_jaxpr_jvp(
     primals, tangents, *, fun_jaxpr: core.ClosedJaxpr,
     fwd_jaxpr_thunk: Callable[[], Tuple[core.Jaxpr, Sequence[Any]]],
-    bwd: Callable, out_trees: Callable, num_consts: int):
+    bwd: lu.WrappedFun, out_trees: Callable, num_consts: int):
   _, args = split_list(primals, [num_consts])
   consts_dot, args_dot = split_list(tangents, [num_consts])
   if any(type(t) is not Zero for t in consts_dot):
@@ -612,7 +616,7 @@ ad.primitive_jvps[custom_vjp_call_jaxpr_p] = _custom_vjp_call_jaxpr_jvp
 def _custom_vjp_call_jaxpr_vmap(
     args, in_dims, *, fun_jaxpr: core.ClosedJaxpr,
     fwd_jaxpr_thunk: Callable[[], Tuple[core.Jaxpr, Sequence[Any]]],
-    bwd: Callable, out_trees: Callable, num_consts: int):
+    bwd: lu.WrappedFun, out_trees: Callable, num_consts: int):
   size, = {x.shape[d] for x, d in zip(args, in_dims) if d is not not_mapped}
   args = [batching.moveaxis(x, d, 0) if d is not not_mapped and d != 0
           else x for x, d in zip(args, in_dims)]
@@ -681,4 +685,4 @@ def omnistaging_disabler() -> None:
 
   def post_process(self, trace, out_tracers, params):
     raise core.UnexpectedTracerError
-  CustomJVPCallPrimitive.post_process = post_process
+  CustomJVPCallPrimitive.post_process = post_process  # type: ignore

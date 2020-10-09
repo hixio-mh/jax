@@ -3523,9 +3523,9 @@ class CustomVJPTest(jtu.JaxTestCase):
       return f(x, y)
 
     with self.assertRaisesRegex(core.UnexpectedTracerError, "custom_vjp"):
-      ans = g(2, 3.)
+      _ = g(2, 3.)
     with self.assertRaisesRegex(core.UnexpectedTracerError, "custom_vjp"):
-      ans = api.grad(g, 1)(2., 3.)
+      _ = api.grad(g, 1)(2., 3.)
 
   def test_vmap_axes(self):
     raise unittest.SkipTest("TODO")  # TODO(mattjj): write test
