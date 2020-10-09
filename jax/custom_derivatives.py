@@ -557,7 +557,6 @@ class CustomVJPCallPrimitive(core.CallPrimitive):
 
   def post_process(self, trace, out_tracers, params):
     return trace.post_process_custom_vjp_call(out_tracers, params)
-
 custom_vjp_call_p = CustomVJPCallPrimitive('custom_vjp_call')
 
 def _custom_vjp_call_jaxpr_impl(*args, fun_jaxpr, **_):

@@ -1039,6 +1039,9 @@ class DynamicJaxprTrace(core.Trace):
     self.frame.eqns.append(eqn)
     return out_tracers
 
+  def post_process_custom_vjp_call(self, out_tracers, params):
+    assert False  # unreachable
+
 def _memoize(thunk):
   cell = []
   saved_state = core.thread_local_state.trace_state.copy()

@@ -3710,6 +3710,68 @@ class CustomVJPTest(jtu.JaxTestCase):
     scan_range = jnp.arange(4)
     lax.scan(scan_body, x, scan_range)  # don't crash
 
+  def test_bwd_closes_over_tracer(self):
+    def f(y):
+      @jax.custom_vjp
+      def f(x):
+        return 2. * jnp.sin(x)
+
+      def fwd(x):
+        return f(x), ()
+
+      def bwd(_, g):
+        return (2. * jnp.cos(y) * g,)  # capture!
+
+      f.defvjp(fwd, bwd)
+
+      return jax.grad(f)(1.)
+
+    ans = jax.jit(f)(2.)
+    self.assertAllClose(ans, 2. * jnp.cos(2.))
+
+    ans = jax.vmap(f)(jnp.arange(3.))
+    self.assertAllClose(ans, 2. * jnp.cos(jnp.arange(3.)))
+
+    ans = jax.jit(jax.vmap(f))(jnp.arange(3.))
+    self.assertAllClose(ans, 2. * jnp.cos(jnp.arange(3.)))
+
+    ans = jax.vmap(jax.jit(f))(jnp.arange(3.))
+    self.assertAllClose(ans, 2. * jnp.cos(jnp.arange(3.)))
+
+    ans = jax.grad(f)(4.)
+    self.assertAllClose(ans, -2. * jnp.sin(4.))
+
+  def test_fwd_closes_over_tracer(self):
+    def f(y):
+      @jax.custom_vjp
+      def f(x):
+        return 2. * jnp.sin(x)
+
+      def fwd(x):
+        return f(x), y
+
+      def bwd(y, g):
+        return (2. * jnp.cos(y) * g,)  # capture!
+
+      f.defvjp(fwd, bwd)
+
+      return jax.grad(f)(1.)
+
+    ans = jax.jit(f)(2.)
+    self.assertAllClose(ans, 2. * jnp.cos(2.))
+
+    ans = jax.vmap(f)(jnp.arange(3.))
+    self.assertAllClose(ans, 2. * jnp.cos(jnp.arange(3.)))
+
+    ans = jax.jit(jax.vmap(f))(jnp.arange(3.))
+    self.assertAllClose(ans, 2. * jnp.cos(jnp.arange(3.)))
+
+    ans = jax.vmap(jax.jit(f))(jnp.arange(3.))
+    self.assertAllClose(ans, 2. * jnp.cos(jnp.arange(3.)))
+
+    ans = jax.grad(f)(4.)
+    self.assertAllClose(ans, -2. * jnp.sin(4.))
+
   def test_float0(self):
     @api.custom_vjp
     def f(x, _):
@@ -3744,6 +3806,7 @@ class CustomVJPTest(jtu.JaxTestCase):
     y = 3
     self.assertEqual(api.grad(foo, allow_int=True, argnums=(0, 1))(x, y),
                      (2., np.zeros(shape=(), dtype=float0)))
+
 
 
 class InvertibleADTest(jtu.JaxTestCase):
