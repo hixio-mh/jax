@@ -227,7 +227,7 @@ class BatchTrace(Trace):
     in_vals, in_dims = unzip2((t.val, t.batch_dim) for t in tracers)
     fun, out_dims1 = batch_subtrace(fun, self.main, in_dims)
     fwd, out_dims2 = batch_subtrace(fwd, self.main, in_dims)
-    # TODO: Support collectives in custom_vjp?
+    # TODO(mattjj,apaszke): support collectives in custom_vjp?
     bwd = batch_fun(bwd, out_dims2, in_dims,
                     axis_name='__unused_axis_name', sum_match=True)
     out_vals = prim.bind(fun, fwd, bwd, *in_vals, out_trees=out_trees)

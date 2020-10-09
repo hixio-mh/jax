@@ -2794,6 +2794,9 @@ class CustomJVPTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def test_closed_over_tracers_error_message(self):
+    if not config.omnistaging_enabled:
+      raise unittest.SkipTest("test only works with omnistaging")
+
     def f(x):
       @api.custom_jvp
       def g(y):
@@ -2841,6 +2844,9 @@ class CustomJVPTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def test_nondiff_arg_hiding_jvp_tracer(self):
+    if not config.omnistaging_enabled:
+      raise unittest.SkipTest("test only works with omnistaging")
+
     def f(x):
       @partial(api.custom_jvp, nondiff_argnums=(0,))
       def g(h, x):
@@ -3159,6 +3165,9 @@ class CustomJVPTest(jtu.JaxTestCase):
     api.vmap(fun_with_nested_calls_2)(jnp.arange(3.))
 
   def test_closure_with_vmap(self):
+    if not config.omnistaging_enabled:
+      raise unittest.SkipTest("test only works with omnistaging")
+
     # https://github.com/google/jax/issues/3822
     alpha = np.float32(2.)
 

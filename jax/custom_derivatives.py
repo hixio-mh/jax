@@ -282,15 +282,6 @@ def _apply_todos(todos, outs):
 custom_jvp_call_p = CustomJVPCallPrimitive('custom_jvp_call')
 
 
-def custom_jvp_call_jaxpr(fun: Callable, jvp: Callable, *args):
-  in_avals = [raise_to_shaped(core.get_aval(x)) for x in args]
-  fun_jaxpr, consts = _initial_style_jaxpr(fun, in_avals)  # consts can be tracers!
-  closed_fun_jaxpr = core.ClosedJaxpr(pe.convert_constvars_jaxpr(fun_jaxpr), ())
-  jvp_jaxpr_thunk = pe._memoize(lambda: _initial_style_jaxpr(jvp, in_avals * 2))
-  return custom_jvp_call_jaxpr_p.bind(
-      *consts, *args, fun_jaxpr=closed_fun_jaxpr,
-      jvp_jaxpr_thunk=jvp_jaxpr_thunk, num_consts=len(consts))
-
 def _custom_jvp_call_jaxpr_impl(*args, fun_jaxpr: core.ClosedJaxpr, **params):
   del params  # other params ignored because we're just executing the primal fun
   return core.jaxpr_as_fun(fun_jaxpr)(*args)
@@ -488,8 +479,8 @@ class custom_vjp:
                                          *args_flat, out_trees=out_trees)
         out_tree = out_tree()
       else:
-        out_flat = custom_vjp_call(flat_fun, flat_fwd, flat_bwd,
-                                   *args_flat, out_trees=out_trees)
+        out_flat = custom_vjp_call_p.bind(flat_fun, flat_fwd, flat_bwd,
+                                          *args_flat, out_trees=out_trees)
         fst, aux = lu.merge_linear_aux(out_tree, out_trees)
         out_tree = aux if fst else aux[0]
     return tree_unflatten(out_tree, out_flat)
@@ -568,15 +559,6 @@ class CustomVJPCallPrimitive(core.CallPrimitive):
     return trace.post_process_custom_vjp_call(out_tracers, params)
 
 custom_vjp_call_p = CustomVJPCallPrimitive('custom_vjp_call')
-custom_vjp_call = custom_vjp_call_p.bind
-
-def custom_vjp_call_jaxpr(fun, fwd, bwd, *args, out_trees):
-  in_avals = [raise_to_shaped(core.get_aval(x)) for x in args]
-  fun_jaxpr = _initial_style_jaxpr(fun, in_avals)
-  fwd_jaxpr_thunk = pe._memoize(lambda: _initial_style_jaxpr(fwd, in_avals))
-  return custom_vjp_call_jaxpr_p.bind(*args, fun_jaxpr=fun_jaxpr,
-                                      fwd_jaxpr_thunk=fwd_jaxpr_thunk, bwd=bwd,
-                                      out_trees=out_trees)
 
 def _custom_vjp_call_jaxpr_impl(*args, fun_jaxpr, **_):
   return core.jaxpr_as_fun(fun_jaxpr)(*args)
@@ -644,6 +626,8 @@ def _custom_vjp_call_jaxpr_vmap(
       fwd_jaxpr_thunk=batched_fwd_jaxpr_thunk, bwd=batched_bwd,
       out_trees=out_trees, num_consts=num_consts)
   out_dims = out_dims2[0] if out_dims2 else out_dims1
+  if not config.omnistaging_enabled:
+    out_dims = out_dims[:len(batched_outs)]
   return batched_outs, out_dims
 batching.primitive_batchers[custom_vjp_call_jaxpr_p] = _custom_vjp_call_jaxpr_vmap
 
@@ -655,7 +639,7 @@ batching.primitive_batchers[ad.custom_lin_p] = ad._raise_custom_vjp_error_on_jvp
 
 @config.register_omnistaging_disabler
 def omnistaging_disabler() -> None:
-  global _initial_style_jaxpr
+  global _initial_style_jaxpr, custom_vjp_call_jaxpr, custom_jvp_call_jaxpr
 
   def _initial_style_jaxpr(fun, in_avals):
     in_pvals = [pe.PartialVal.unknown(aval) for aval in in_avals]
@@ -664,7 +648,7 @@ def omnistaging_disabler() -> None:
     assert not any(isinstance(c, core.Tracer) for c in consts)
     return jaxpr, consts
 
-  def bind(self, fun, jvp, *args):
+  def jvp_bind(self, fun, jvp, *args):
     args = map(core.full_lower, args)
     top_trace = core.find_top_trace(args)
     fun, env_trace_todo1 = core.process_env_traces(
@@ -681,8 +665,43 @@ def omnistaging_disabler() -> None:
     if env_trace_todo:
       raise core.UnexpectedTracerError
     return map(core.full_lower, outs)
-  CustomJVPCallPrimitive.bind = bind  # type: ignore
+  CustomJVPCallPrimitive.bind = jvp_bind  # type: ignore
 
-  def post_process(self, trace, out_tracers, params):
+  def jvp_post_process(self, trace, out_tracers, params):
     raise core.UnexpectedTracerError
-  CustomJVPCallPrimitive.post_process = post_process  # type: ignore
+  CustomJVPCallPrimitive.post_process = jvp_post_process  # type: ignore
+
+  def vjp_bind(self, fun, fwd, bwd, *args, out_trees):
+    args = map(core.full_lower, args)
+    top_trace = core.find_top_trace(args)
+    if top_trace is None:
+      outs = fun.call_wrapped(*args)
+    else:
+      tracers = map(top_trace.full_raise, args)
+      outs = top_trace.process_custom_vjp_call(self, fun, fwd, bwd, tracers,
+                                               out_trees=out_trees)
+    return map(core.full_lower, outs)
+  CustomVJPCallPrimitive.bind = vjp_bind  # type: ignore
+
+  def vjp_post_process(self, trace, out_tracers, params):
+    raise core.UnexpectedTracerError
+  CustomVJPCallPrimitive.post_process = vjp_post_process
+
+  def custom_jvp_call_jaxpr(fun: Callable, jvp: Callable, *args):
+    in_avals = [raise_to_shaped(core.get_aval(x)) for x in args]
+    fun_jaxpr, consts = _initial_style_jaxpr(fun, in_avals)  # consts can be tracers!
+    closed_fun_jaxpr = core.ClosedJaxpr(pe.convert_constvars_jaxpr(fun_jaxpr), ())
+    jvp_jaxpr_thunk = pe._memoize(lambda: _initial_style_jaxpr(jvp, in_avals * 2))
+    return custom_jvp_call_jaxpr_p.bind(
+        *consts, *args, fun_jaxpr=closed_fun_jaxpr,
+        jvp_jaxpr_thunk=jvp_jaxpr_thunk, num_consts=len(consts))
+
+  def custom_vjp_call_jaxpr(fun, fwd, bwd, *args, out_trees):
+    in_avals = [raise_to_shaped(core.get_aval(x)) for x in args]
+    fun_jaxpr, consts = _initial_style_jaxpr(fun, in_avals)  # consts can be tracers!
+    closed_fun_jaxpr = core.ClosedJaxpr(pe.convert_constvars_jaxpr(fun_jaxpr), ())
+    fwd_jaxpr_thunk = pe._memoize(lambda: _initial_style_jaxpr(fwd, in_avals))
+    return custom_vjp_call_jaxpr_p.bind(
+        *consts, *args, fun_jaxpr=closed_fun_jaxpr,
+        fwd_jaxpr_thunk=fwd_jaxpr_thunk, bwd=bwd, out_trees=out_trees,
+        num_consts=len(consts))
