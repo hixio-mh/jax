@@ -684,7 +684,7 @@ def omnistaging_disabler() -> None:
 
   def vjp_post_process(self, trace, out_tracers, params):
     raise core.UnexpectedTracerError
-  CustomVJPCallPrimitive.post_process = vjp_post_process
+  CustomVJPCallPrimitive.post_process = vjp_post_process  # type: ignore
 
   def custom_jvp_call_jaxpr(fun: Callable, jvp: Callable, *args):
     in_avals = [raise_to_shaped(core.get_aval(x)) for x in args]
